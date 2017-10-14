@@ -1,27 +1,30 @@
-﻿using Ecs;
+﻿using System;
+using System.Collections.Generic;
+using Ecs;
 using OpenTK;
 using OpenTK.Graphics;
 using OpenTK.Input;
-using System;
-using System.Collections.Generic;
 
 namespace console
 {
-    class Program
+    internal class Program
     {
-        static void Main(string[] args)
+        private static void Main(string[] args)
         {
-            SystemProcessor sp = new SystemProcessor();
-            EntityManager em = new EntityManager(sp);
-            MoverSystem ms = new MoverSystem();
-            sp.RegisterSystem(ms);
+            var cm = new ComponentManager();
+
+            var sp = new SystemProcessor(cm);
+            sp.RegisterSystem(new MoverSystem());
             sp.RegisterSystem(new ControllerSystem());
             sp.RegisterSystem(new ConsoleRenderSystem());
-            int entity = em.CreateEntity();
+
+            var em = new EntityManager(sp, cm);
+            var entity = em.CreateEntity();
             em.AddComponent<Position>(entity);
             em.AddComponent(entity, new Velocity());
 
-            NativeWindow nw = new NativeWindow(960, 540, "WINDOW", GameWindowFlags.Default, GraphicsMode.Default, DisplayDevice.Default);
+            var nw = new NativeWindow(960, 540, "WINDOW", GameWindowFlags.Default, GraphicsMode.Default,
+                DisplayDevice.Default);
             nw.KeyDown += OnKeyDown;
             nw.KeyUp += OnKeyUp;
 
@@ -30,10 +33,10 @@ namespace console
             while (nw.Exists)
             {
                 nw.ProcessEvents();
-                KeyboardState keyboardState = Keyboard.GetState();
-                foreach (object key in Enum.GetValues(typeof(Key)))
+                var keyboardState = Keyboard.GetState();
+                foreach (var key in Enum.GetValues(typeof(Key)))
                 {
-                    if (keyboardState.IsKeyDown((Key)key))
+                    if (keyboardState.IsKeyDown((Key) key))
                     {
                         Console.WriteLine(key);
                     }
@@ -65,7 +68,6 @@ namespace console
 
     public class MoverSystem : GameSystem<Position, Velocity>
     {
-        public override int GetTypeMask() => 3;
         public override void ProcessEntity(ref Position pos, ref Velocity vel)
         {
             pos.Value += vel.Value * Time.DeltaTime;
@@ -74,24 +76,28 @@ namespace console
 
     public static class KeyboardManager
     {
-        private static readonly HashSet<Key> _keys = new HashSet<Key>();
+        private static readonly HashSet<Key> Keys = new HashSet<Key>();
 
-        public static void Down(Key key) => _keys.Add(key);
-        public static void Up(Key key) => _keys.Remove(key);
-
-        public static bool IsKeyDown(Key key) => _keys.Contains(key);
-    }
-
-    public class ControllerSystem : GameSystem
-    {
-        public override int GetTypeMask()
+        public static void Down(Key key)
         {
-            return 2;
+            Keys.Add(key);
         }
 
-        public override void ProcessEntity(float deltaTime, int entity)
+        public static void Up(Key key)
         {
-            ref Velocity vel = ref Storages.GetStorage<Velocity>().GetComponent<Velocity>(entity);
+            Keys.Remove(key);
+        }
+
+        public static bool IsKeyDown(Key key)
+        {
+            return Keys.Contains(key);
+        }
+    }
+
+    public class ControllerSystem : GameSystem<Velocity>
+    {
+        public override void ProcessEntity(ref Velocity vel)
+        {
             vel.Value = Vector3.Zero;
 
             if (KeyboardManager.IsKeyDown(Key.A))
@@ -105,17 +111,11 @@ namespace console
         }
     }
 
-    public class ConsoleRenderSystem : GameSystem
+    public class ConsoleRenderSystem : GameSystem<Position>
     {
-        public override int GetTypeMask()
+        public override void ProcessEntity(ref Position pos)
         {
-            return 1;
-        }
-
-        public override void ProcessEntity(float deltaTime, int entity)
-        {
-            ref Position pos = ref Storages.GetStorage<Position>().GetComponent<Position>(entity);
-            Console.WriteLine("Position: " + pos.Value);
+            Console.WriteLine($"Position: {pos.Value}");
         }
     }
 

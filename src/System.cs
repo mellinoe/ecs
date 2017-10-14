@@ -10,7 +10,7 @@ namespace Ecs
 
         public void Process(float deltaTime)
         {
-            foreach (int entity in _entities)
+            foreach (var entity in _entities)
             {
                 ProcessEntity(deltaTime, entity);
             }
@@ -18,7 +18,14 @@ namespace Ecs
 
         public abstract void ProcessEntity(float deltaTime, int entity);
 
-        public abstract int GetTypeMask();
+        protected int TypeMask;
+
+        public int GetTypeMask()
+        {
+            return TypeMask;
+        }
+
+        public abstract void SetTypeMask(ComponentManager cm);
 
         internal void TrackNewEntity(int entity)
         {
@@ -26,12 +33,35 @@ namespace Ecs
         }
     }
 
-    public abstract class GameSystem<T1, T2> : GameSystem
+    public abstract class GameSystem<T1> : GameSystem
     {
+        public override void SetTypeMask(ComponentManager cm)
+        {
+            TypeMask |= cm.GetMask<T1>();
+        }
+
         public override void ProcessEntity(float deltaTime, int entity)
         {
-            ref T1 t1Ref = ref Storages.GetStorage<T1>().GetComponent<T1>(entity);
-            ref T2 t2Ref = ref Storages.GetStorage<T2>().GetComponent<T2>(entity);
+            ref var t1Ref = ref Storages.GetStorage<T1>().GetComponent<T1>(entity);
+
+            ProcessEntity(ref t1Ref);
+        }
+
+        public abstract void ProcessEntity(ref T1 t1Rfef);
+    }
+
+    public abstract class GameSystem<T1, T2> : GameSystem
+    {
+        public override void SetTypeMask(ComponentManager cm)
+        {
+            TypeMask |= cm.GetMask<T1>();
+            TypeMask |= cm.GetMask<T2>();
+        }
+
+        public override void ProcessEntity(float deltaTime, int entity)
+        {
+            ref var t1Ref = ref Storages.GetStorage<T1>().GetComponent<T1>(entity);
+            ref var t2Ref = ref Storages.GetStorage<T2>().GetComponent<T2>(entity);
 
             ProcessEntity(ref t1Ref, ref t2Ref);
         }
@@ -42,20 +72,21 @@ namespace Ecs
 
     public class EntityManager
     {
+        private readonly ComponentManager _componentManager;
         private readonly Dictionary<int, int> _entityComponentMasks = new Dictionary<int, int>();
         private readonly SystemProcessor _systemProcessor;
-        private readonly ComponentManager _componentManager = new ComponentManager();
 
         private int _nextID = 1;
 
-        public EntityManager(SystemProcessor sp)
+        public EntityManager(SystemProcessor sp, ComponentManager componentManager)
         {
             _systemProcessor = sp;
+            _componentManager = componentManager;
         }
 
         public int CreateEntity()
         {
-            int ret = _nextID;
+            var ret = _nextID;
             _nextID += 1;
             return ret;
         }
@@ -67,54 +98,55 @@ namespace Ecs
 
         public void AddComponent<T>(int entity, T component)
         {
-            ComponentStorage<T> storage = Storages.GetStorage<T>();
-            int index = storage.Store(entity, component);
-            OnComponentAdded(entity, _componentManager.GetID<T>());
+            var storage = Storages.GetStorage<T>();
+            var index = storage.Store(entity, component);
+            OnComponentAdded(entity, _componentManager.GetMask<T>());
         }
 
-        internal void OnComponentAdded(int entity, int typeID)
+        internal void OnComponentAdded(int entity, int componentMask)
         {
-            _entityComponentMasks.TryGetValue(entity, out int mask);
-            mask |= (1 << typeID);
+            _entityComponentMasks.TryGetValue(entity, out var mask);
+            mask |= componentMask;
             _entityComponentMasks[entity] = mask;
             _systemProcessor.EntityChangedMask(entity, mask);
         }
     }
 
-    internal class ComponentManager
+    public class ComponentManager
     {
         public readonly Dictionary<Type, int> _typeIDs = new Dictionary<Type, int>();
 
-        private int _nextID = 0;
+        private int _nextId;
 
-        public int GetID<T>()
+        public int GetMask<T>()
         {
-            Type type = typeof(T);
-            if (!_typeIDs.TryGetValue(type, out int ret))
+            var type = typeof(T);
+            if (!_typeIDs.TryGetValue(type, out var typeId))
             {
-                ret = _nextID;
-                _nextID += 1;
-                _typeIDs[type] = ret;
+                typeId = _nextId;
+                _nextId += 1;
+                _typeIDs[type] = typeId;
             }
 
-            return ret;
+            return 1 << typeId;
         }
     }
 
     public static class Storages
     {
-        private static readonly Dictionary<Type, ComponentStorageBase> _storages = new Dictionary<Type, ComponentStorageBase>();
+        private static readonly Dictionary<Type, ComponentStorageBase> _storages =
+            new Dictionary<Type, ComponentStorageBase>();
 
         public static ComponentStorage<T> GetStorage<T>()
         {
-            Type t = typeof(T);
-            if (!_storages.TryGetValue(t, out ComponentStorageBase storage))
+            var t = typeof(T);
+            if (!_storages.TryGetValue(t, out var storage))
             {
                 storage = new ComponentStorage<T>();
                 _storages.Add(t, storage);
             }
 
-            return (ComponentStorage<T>)storage;
+            return (ComponentStorage<T>) storage;
         }
     }
 
@@ -127,14 +159,14 @@ namespace Ecs
 
     public class ComponentStorage<T> : ComponentStorageBase
     {
-        public T[] Components { get; } = new T[100];
-        private Dictionary<int, int> _componentIndicesByEntity = new Dictionary<int, int>();
+        private readonly Dictionary<int, int> _componentIndicesByEntity = new Dictionary<int, int>();
         private int _nextID = 1;
+        public T[] Components { get; } = new T[100];
 
-        public unsafe override int Store<T2>(int entity, T2 component)
+        public override unsafe int Store<T2>(int entity, T2 component)
         {
-            int ret = _nextID;
-            void* ptr = Unsafe.AsPointer(ref component);
+            var ret = _nextID;
+            var ptr = Unsafe.AsPointer(ref component);
             Components[ret] = Unsafe.AsRef<T>(ptr);
             _componentIndicesByEntity[entity] = ret;
             _nextID += 1;
@@ -146,25 +178,32 @@ namespace Ecs
             return _componentIndicesByEntity[entity];
         }
 
-        public unsafe override ref T1 GetComponent<T1>(int entity)
+        public override unsafe ref T1 GetComponent<T1>(int entity)
         {
-            ref T refVal = ref Components[GetStorageIndex(entity)];
+            ref var refVal = ref Components[GetStorageIndex(entity)];
             return ref Unsafe.AsRef<T1>(Unsafe.AsPointer(ref refVal));
         }
     }
 
     public class SystemProcessor
     {
+        private readonly ComponentManager _componentManager;
         private readonly List<GameSystem> _systems = new List<GameSystem>();
+
+        public SystemProcessor(ComponentManager componentManager)
+        {
+            _componentManager = componentManager;
+        }
 
         public void RegisterSystem(GameSystem s)
         {
+            s.SetTypeMask(_componentManager);
             _systems.Add(s);
         }
 
         public void Process(float deltaTime)
         {
-            foreach (GameSystem system in _systems)
+            foreach (var system in _systems)
             {
                 system.Process(deltaTime);
             }
@@ -172,9 +211,9 @@ namespace Ecs
 
         internal void EntityChangedMask(int entity, int mask)
         {
-            foreach (GameSystem system in _systems)
+            foreach (var system in _systems)
             {
-                int systemMask = system.GetTypeMask();
+                var systemMask = system.GetTypeMask();
                 if ((systemMask & mask) == systemMask)
                 {
                     system.TrackNewEntity(entity);
