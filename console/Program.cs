@@ -21,7 +21,7 @@ namespace console
             var em = new EntityManager(sp, cm);
             var entity = em.CreateEntity();
             em.AddComponent<Position>(entity);
-            em.AddComponent(entity, new Velocity());
+            em.AddComponent<Velocity>(entity);
 
             var nw = new NativeWindow(960, 540, "WINDOW", GameWindowFlags.Default, GraphicsMode.Default,
                 DisplayDevice.Default);
